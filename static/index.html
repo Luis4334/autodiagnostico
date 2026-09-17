@@ -1,0 +1,1186 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MPFM Autodiagnóstico Continuo — VOX-X4</title>
+  <script src="/static/tailwindcss.js"></script>
+  <script src="/static/lucide.js"></script>
+  <script src="/static/vue.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            scada: {
+              base: '#0B0F17', panel: '#111726', surface: '#182032',
+              card: '#1D273D', border: '#2A3650', accent: '#38BDF8',
+              success: '#10B981', warning: '#F59E0B',
+              danger: '#EF4444', muted: '#64748B'
+            }
+          },
+          fontFamily: {
+            mono: ['JetBrains Mono','ui-monospace','SFMono-Regular','Menlo','Monaco','Consolas','monospace'],
+            sans: ['Inter','system-ui','-apple-system','sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+    body {
+      background-color: #07090E;
+      background-image:
+        radial-gradient(circle at 50% 20%, rgba(30,41,59,0.45) 0%, transparent 70%),
+        linear-gradient(to right,  rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255,255,255,0.02) 1px, transparent 1px);
+      background-size: 100% 100%, 32px 32px, 32px 32px;
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      color: #F1F5F9;
+      -webkit-app-region: drag;     /* ventana pywebview arrastrable */
+      user-select: none;
+    }
+    button, input, select { -webkit-app-region: no-drag; user-select: auto; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track  { background: rgba(15,23,42,0.6); }
+    ::-webkit-scrollbar-thumb  { background: #2A3650; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3B82F6; }
+    .glass-effect {
+      background: rgba(17,23,38,0.88);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,255,255,0.08);
+      box-shadow: 0 20px 40px -15px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04) inset;
+    }
+    .pulse-indicator { animation: pulse-op 2s infinite cubic-bezier(0.4,0,0.6,1); }
+    @keyframes pulse-op {
+      0%, 100% { opacity:1; transform:scale(1); }
+      50% { opacity:0.4; transform:scale(0.92); }
+    }
+    .fade-tab { animation: fadeIn 0.18s ease; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+  </style>
+</head>
+<body class="p-4 flex flex-col items-center justify-start min-h-screen">
+
+<div id="app" class="w-full max-w-5xl flex flex-col items-center">
+
+  <!-- ── HUD BAR ─────────────────────────────────────────── -->
+  <header class="w-full mb-4 flex items-center justify-between px-2 text-xs text-slate-400 select-none">
+    <div class="flex items-center gap-2.5">
+      <span class="inline-flex w-2 h-2 rounded-full"
+            :class="apiOnline ? 'bg-emerald-500 pulse-indicator' : 'bg-rose-500'"></span>
+      <span class="font-mono text-slate-300 font-semibold tracking-wider">MPFM-RTAD // {{ wellId }}</span>
+      <span class="px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700 text-[10px] text-slate-400 uppercase font-mono">SCADA Engine 4.2.1</span>
+    </div>
+    <div class="flex items-center gap-4 font-mono text-[11px]">
+      <!-- Estado PLC -->
+      <span class="flex items-center gap-1.5 px-2 py-0.5 rounded-md border font-bold text-[10px] uppercase tracking-wide transition-all"
+            :class="plcConnected === true  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                  : plcConnected === false ? 'bg-rose-500/10 border-rose-600/50 text-rose-400'
+                  :                          'bg-slate-700/40 border-slate-600 text-slate-400'">
+        <span class="w-1.5 h-1.5 rounded-full"
+              :class="plcConnected === true  ? 'bg-emerald-400 pulse-indicator'
+                    : plcConnected === false ? 'bg-rose-500'
+                    :                          'bg-slate-500'"></span>
+        PLC: {{ plcConnected === true ? 'ONLINE' : plcConnected === false ? 'OFFLINE' : '---' }}
+        <span v-if="plcLastOkAgo !== null && plcConnected" class="text-slate-500 font-normal">
+          ({{ plcLastOkAgo }}s)
+        </span>
+      </span>
+      <span class="text-slate-500">API: <span :class="apiOnline ? 'text-emerald-400' : 'text-rose-400'">{{ apiOnline ? 'ONLINE' : 'OFFLINE' }}</span></span>
+      <span class="text-slate-500">SYNC: <span class="text-slate-300">{{ lastSync || '—' }}</span></span>
+      <span class="text-slate-400">{{ formattedTime }}</span>
+      <!-- Botón cierre nativo (solo pywebview / frameless) -->
+      <button @click="closeWindow"
+              class="ml-2 w-5 h-5 rounded-full bg-slate-700/60 hover:bg-rose-600/70 border border-slate-600 flex items-center justify-center transition-colors"
+              title="Cerrar widget">
+        <i data-lucide="x" class="w-3 h-3"></i>
+      </button>
+    </div>
+  </header>
+
+  <!-- ── WIDGET PRINCIPAL ──────────────────────────────────── -->
+  <main class="glass-effect rounded-2xl w-full overflow-hidden relative border border-slate-700/60 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+        :class="isExpanded ? 'shadow-2xl' : 'shadow-xl'">
+
+    <!-- Barra de color superior según estado -->
+    <div class="h-0.5 w-full transition-colors duration-500"
+         :class="healthScore >= 90 ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-600'
+               : healthScore >= 70 ? 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-600'
+               :                     'bg-gradient-to-r from-rose-500 via-red-400 to-rose-600'"></div>
+
+    <!-- ── BANNER PLC OFFLINE ────────────────────────────────────── -->
+    <transition
+      enter-active-class="transition ease-out duration-300"
+      enter-from-class="-translate-y-full opacity-0"
+      enter-to-class="translate-y-0 opacity-100"
+      leave-active-class="transition ease-in duration-200"
+      leave-from-class="opacity-100"
+      leave-to-class="-translate-y-full opacity-0">
+      <div v-if="plcConnected === false"
+           class="flex items-center gap-3 px-4 py-2.5 bg-rose-950/80 border-b border-rose-800/60 text-xs font-mono">
+        <i data-lucide="wifi-off" class="w-4 h-4 text-rose-400 shrink-0"></i>
+        <div class="flex-1">
+          <span class="text-rose-300 font-semibold">SIN CONEXIÓN CON EL PLC</span>
+          <span class="text-rose-400/80 ml-2">— Los datos mostrados son del último ciclo registrado en base de datos. No reflejan el estado actual del proceso.</span>
+        </div>
+        <span v-if="plcDataAge !== null" class="text-rose-500 shrink-0">
+          Último dato hace {{ plcDataAge }}s
+        </span>
+      </div>
+    </transition>
+
+    <!-- ── CABECERA COMPACTA (siempre visible) ───────────────── -->
+    <section class="p-4 sm:p-5 flex items-center justify-between gap-4 border-b border-slate-800/80">
+      <div class="flex items-center gap-4">
+        <!-- Indicador circular de salud -->
+        <div class="relative flex items-center justify-center">
+          <svg class="w-14 h-14 -rotate-90" viewBox="0 0 64 64">
+            <circle cx="32" cy="32" r="26" fill="transparent" stroke="currentColor"
+                    stroke-width="5.5" class="text-slate-800"/>
+            <circle cx="32" cy="32" r="26" fill="transparent"
+                    :stroke="healthColorHex" stroke-width="5.5"
+                    stroke-dasharray="163.36"
+                    :stroke-dashoffset="163.36 * (1 - healthScore / 100)"
+                    stroke-linecap="round" class="transition-all duration-700 ease-out"/>
+          </svg>
+          <div class="absolute inset-0 flex flex-col items-center justify-center font-mono">
+            <span class="text-sm font-bold" :class="healthTextClass">{{ healthScore }}%</span>
+          </div>
+        </div>
+        <!-- Texto de estado -->
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-mono uppercase tracking-widest text-slate-400">Autodiagnóstico MPFM</span>
+            <span class="px-2 py-0.5 text-[10px] font-bold font-mono uppercase tracking-wider rounded-full flex items-center gap-1 border"
+                  :class="statusBadgeClasses">
+              <span class="w-1.5 h-1.5 rounded-full" :class="statusDotClass"></span>
+              {{ statusText }}
+            </span>
+          </div>
+          <h1 class="text-base font-semibold text-slate-100 flex items-center gap-2 mt-0.5">
+            Medidor Multifásico — {{ wellId }}
+            <span class="text-xs font-normal font-mono text-slate-500">VOX-X4</span>
+          </h1>
+          <p class="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
+            <i data-lucide="radio" class="w-3 h-3 text-emerald-400"></i>
+            <span>Monitoreo continuo activo &bull; Última sync: {{ lastSync || 'Conectando…' }}</span>
+          </p>
+        </div>
+      </div>
+      <button @click="toggleExpand"
+              class="group flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700/80 border border-slate-700 text-xs font-medium text-slate-200 transition-all duration-300 active:scale-95">
+        <span>{{ isExpanded ? 'Contraer' : 'Expandir' }}</span>
+        <div class="w-5 h-5 rounded-lg bg-slate-700/80 flex items-center justify-center transition-transform duration-300"
+             :class="isExpanded ? 'rotate-180' : 'rotate-0'">
+          <i data-lucide="chevron-down" class="w-3.5 h-3.5"></i>
+        </div>
+      </button>
+    </section>
+
+    <!-- ── VISTA EXPANDIDA ──────────────────────────────────── -->
+    <div v-show="isExpanded">
+
+      <!-- Tabs de navegación -->
+      <nav class="flex items-center px-4 border-b border-slate-800 bg-slate-900/40 text-xs font-medium text-slate-400 overflow-x-auto">
+        <button v-for="tab in tabs" :key="tab.id" @click="activeTab = tab.id"
+                class="flex items-center gap-2 py-3 px-3.5 border-b-2 transition-colors duration-200 whitespace-nowrap"
+                :class="activeTab === tab.id ? 'border-sky-400 text-sky-400 bg-sky-500/5' : 'border-transparent hover:text-slate-200 hover:border-slate-700'">
+          <i :data-lucide="tab.icon" class="w-4 h-4"></i>
+          <span>{{ tab.name }}</span>
+          <span v-if="tab.badge" class="ml-1 px-1.5 rounded-full text-[10px] font-mono" :class="tab.badgeClass">{{ tab.badge }}</span>
+        </button>
+      </nav>
+
+      <div class="p-5 space-y-6">
+
+        <!-- ═══ TAB 1: DESCRIPCIÓN GENERAL ══════════════════════ -->
+        <div v-show="activeTab === 'overview'" class="space-y-5 fade-tab">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-xs uppercase font-mono tracking-wider text-slate-400">Envolvente Operativa del Pozo (WOE)</h3>
+              <p class="text-xs text-slate-500">Parámetros PVT y umbrales cargados desde tb_config_pozo</p>
+            </div>
+            <div class="flex items-center gap-2 text-xs font-mono text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/20">
+              <i data-lucide="check-circle" class="w-3.5 h-3.5"></i>
+              <span>Dentro de la Envolvente</span>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div v-for="card in woeCards" :key="card.label" class="p-3.5 rounded-xl bg-slate-800/50 border border-slate-700/50">
+              <div class="text-[11px] text-slate-400 flex items-center justify-between">
+                <span>{{ card.label }}</span>
+                <span class="font-mono text-slate-500">{{ card.tag }}</span>
+              </div>
+              <div class="mt-1 flex items-baseline gap-1">
+                <span class="text-xl font-bold font-mono text-slate-100">{{ card.value }}</span>
+                <span class="text-xs text-slate-400">{{ card.unit }}</span>
+              </div>
+              <div class="text-[10px] text-slate-500 mt-1">{{ card.hint }}</div>
+            </div>
+          </div>
+
+          <!-- Barra de punto de operación GVF -->
+          <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
+            <div class="flex justify-between items-center mb-2">
+              <span class="font-mono text-slate-400">Punto de Operación vs Límites de Validación</span>
+              <span class="font-mono text-[11px] text-slate-500">GVF: {{ liveVar('sonar','—') }}%</span>
+            </div>
+            <div class="relative h-6 bg-slate-800 rounded-lg overflow-hidden">
+              <div class="absolute left-0 top-0 bottom-0 bg-slate-700/40 w-[15%]"></div>
+              <div class="absolute left-[15%] top-0 bottom-0 bg-emerald-500/20 border-x border-emerald-500/40 w-[70%]"></div>
+              <div class="absolute right-0 top-0 bottom-0 bg-slate-700/40 w-[15%]"></div>
+              <div class="absolute top-1 bottom-1 w-2 bg-sky-400 rounded-sm transition-all duration-500"
+                   :style="{ left: `calc(${Math.min(Math.max(parseFloat(liveVar('sonar',0)) * 0.7, 0), 85)}% + ${0}px)` }">
+              </div>
+            </div>
+            <div class="flex justify-between text-[10px] font-mono text-slate-500 mt-1">
+              <span>0% GVF (Líquido)</span>
+              <span class="text-emerald-400">Ventana Óptima Dual</span>
+              <span>100% GVF (Gas)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══ TAB 2: MONITOR EN VIVO ═══════════════════════════ -->
+        <div v-show="activeTab === 'live'" class="space-y-4 fade-tab">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-xs uppercase font-mono tracking-wider text-slate-400">Instrumentación y Variables Primarias</h3>
+              <p class="text-xs text-slate-500">Polling cada 1 s desde /api/monitoreo/live → tb_telemetria</p>
+            </div>
+            <div class="flex items-center gap-1 text-[11px] font-mono text-slate-400">
+              <span class="w-2 h-2 rounded-full animate-ping mr-1" :class="apiOnline ? 'bg-sky-400' : 'bg-slate-600'"></span>
+              {{ apiOnline ? 'LIVE STREAM' : 'SIN SEÑAL' }}
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div v-for="item in liveVariables" :key="item.key"
+                 class="p-3.5 rounded-xl border hover:border-slate-600 transition-colors flex flex-col justify-between"
+                 :class="plcConnected === false ? 'bg-slate-900/60 border-slate-800/40 opacity-60'
+                        : item.alert ? 'bg-amber-900/10 border-amber-700/40' : 'bg-slate-800/40 border-slate-700/60'">
+              <div class="flex items-center justify-between">
+                <span class="text-xs text-slate-300 font-medium">{{ item.name }}</span>
+                <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">{{ item.symbol }}</span>
+              </div>
+              <div class="my-2 flex items-baseline justify-between">
+                <div>
+                  <span class="text-2xl font-bold font-mono" :class="item.alert ? 'text-amber-300' : 'text-slate-100'">{{ item.value }}</span>
+                  <span class="text-xs text-slate-400 ml-1">{{ item.unit }}</span>
+                </div>
+                <span class="text-[10px] font-mono font-medium flex items-center gap-0.5"
+                      :class="item.delta >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                  {{ item.delta >= 0 ? '+' : '' }}{{ item.delta }}%
+                </span>
+              </div>
+              <!-- Sparkline SVG dinámico -->
+              <div class="h-9 w-full pt-1">
+                <svg class="w-full h-full overflow-visible" viewBox="0 0 100 24" preserveAspectRatio="none">
+                  <path :d="item.path" fill="none"
+                        :stroke="item.alert ? '#F59E0B' : '#38BDF8'"
+                        stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path :d="item.areaPath"
+                        :fill="item.alert ? 'rgba(245,158,11,0.08)' : 'rgba(56,189,248,0.08)'"/>
+                </svg>
+              </div>
+              <div class="flex justify-between mt-1 text-[10px] text-slate-500 font-mono">
+                <span>Min: {{ item.min }}</span>
+                <span>Max: {{ item.max }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══ TAB 3: CAPAS DE DIAGNÓSTICO ═══════════════════════ -->
+        <div v-show="activeTab === 'layers'" class="space-y-4 fade-tab">
+          <div>
+            <h3 class="text-xs uppercase font-mono tracking-wider text-slate-400">Jerarquía de Diagnóstico Continuo</h3>
+            <p class="text-xs text-slate-500">Evaluación matricial en 3 capas — actualizado en cada ciclo de evaluate()</p>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div v-for="layer in diagnosticLayers" :key="layer.id"
+                 class="p-4 rounded-xl bg-slate-800/40 border flex flex-col justify-between"
+                 :class="layer.status === 'OK' ? 'border-emerald-700/40' : layer.status === 'WARN' ? 'border-amber-700/40' : 'border-rose-700/40'">
+              <div>
+                <div class="flex items-center justify-between mb-3">
+                  <span class="text-xs font-mono text-slate-400">{{ layer.id }}</span>
+                  <span class="px-2 py-0.5 rounded text-[11px] font-mono font-semibold flex items-center gap-1 border"
+                        :class="layer.status === 'OK'   ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                              : layer.status === 'WARN' ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                              :                           'bg-rose-500/10 text-rose-400 border-rose-500/30'">
+                    <i :data-lucide="layer.status === 'OK' ? 'check' : layer.status === 'WARN' ? 'alert-triangle' : 'x'" class="w-3 h-3"></i>
+                    {{ layer.status === 'OK' ? 'APROBADO' : layer.status === 'WARN' ? 'ADVERTENCIA' : 'FALLA' }}
+                  </span>
+                </div>
+                <h4 class="text-sm font-semibold text-slate-100">{{ layer.name }}</h4>
+                <p class="text-xs text-slate-400 mt-1">{{ layer.desc }}</p>
+              </div>
+              <div class="mt-4 pt-3 border-t border-slate-800 space-y-1.5 text-xs font-mono">
+                <div v-for="chk in layer.checks" :key="chk.label" class="flex justify-between text-slate-400">
+                  <span>{{ chk.label }}:</span>
+                  <span :class="chk.ok ? 'text-emerald-400' : 'text-amber-400'">{{ chk.val }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══ TAB 4: ALARMAS ════════════════════════════════════ -->
+        <div v-show="activeTab === 'alarms'" class="space-y-4 fade-tab">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-xs uppercase font-mono tracking-wider text-slate-400">Registro de Alarmas & Eventos SCADA</h3>
+              <p class="text-xs text-slate-500">Desde tb_historico_alarmas — últimas {{ alarmLogs.length }} entradas</p>
+            </div>
+            <div class="flex items-center gap-2 text-[11px] font-mono text-slate-400">
+              Activas: <span class="text-amber-400 font-bold ml-1">{{ activeAlarms }}</span>
+            </div>
+          </div>
+
+          <div v-if="alarmLogs.length === 0"
+               class="rounded-xl border border-slate-800 bg-slate-900/50 p-8 text-center text-xs font-mono text-slate-500">
+            <i data-lucide="shield-check" class="w-8 h-8 mx-auto mb-2 text-emerald-600"></i>
+            Sin alarmas registradas — sistema operando nominalmente
+          </div>
+
+          <div v-else class="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
+            <div class="max-h-64 overflow-y-auto divide-y divide-slate-800/60 font-mono text-xs">
+              <div v-for="alarm in alarmLogs" :key="alarm.id"
+                   class="p-3 hover:bg-slate-800/30 flex items-start justify-between gap-3 transition-colors">
+                <div class="flex items-start gap-3">
+                  <span class="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider mt-0.5"
+                        :class="severityClass(alarm.severidad)">{{ alarm.severidad }}</span>
+                  <div>
+                    <div class="text-slate-200 font-sans font-medium text-xs">{{ alarm.codigo_alarma }} — {{ alarm.capa_diagnostico }}</div>
+                    <div class="text-[11px] text-slate-400 mt-0.5">
+                      <span v-if="Array.isArray(alarm.anomalias_json) && alarm.anomalias_json.length">
+                        {{ alarm.anomalias_json[0] }}
+                      </span>
+                      <span v-else>Score: {{ alarm.health_score_pct }}% — {{ alarm.status_label }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="text-right text-[11px] text-slate-500 whitespace-nowrap shrink-0">
+                  <div>{{ formatAlarmTs(alarm.timestamp_evento_utc) }}</div>
+                  <div class="text-[10px] text-slate-600">{{ alarm.failed_checks }}/{{ alarm.total_checks }} checks</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══ TAB 5: CONFIGURACIÓN ══════════════════════════════ -->
+        <div v-show="activeTab === 'config'" class="space-y-4 fade-tab">
+          <div>
+            <h3 class="text-xs uppercase font-mono tracking-wider text-slate-400">Ajuste de Envolvente y Umbrales</h3>
+            <p class="text-xs text-slate-500">Escribe en tb_config_pozo via POST /api/configuracion (versionado)</p>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+            <!-- Columna izquierda -->
+            <div class="p-3.5 rounded-xl bg-slate-800/40 border border-slate-700/60 space-y-3">
+              <span class="font-semibold text-slate-200">Parámetros PVT</span>
+              <div v-for="f in configFieldsLeft" :key="f.key">
+                <label class="block text-slate-400 text-[11px] mb-1">{{ f.label }}</label>
+                <input type="number" :step="f.step || 0.1" v-model="configForm[f.key]"
+                       class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 font-mono text-slate-200 focus:outline-none focus:border-sky-500 text-xs">
+              </div>
+            </div>
+            <!-- Columna derecha -->
+            <div class="p-3.5 rounded-xl bg-slate-800/40 border border-slate-700/60 space-y-3">
+              <span class="font-semibold text-slate-200">Umbrales de Detección</span>
+              <div v-for="f in configFieldsRight" :key="f.key">
+                <label class="block text-slate-400 text-[11px] mb-1">{{ f.label }}</label>
+                <input type="number" :step="f.step || 0.1" v-model="configForm[f.key]"
+                       class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 font-mono text-slate-200 focus:outline-none focus:border-sky-500 text-xs">
+              </div>
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-2 pt-2">
+            <button @click="resetConfig"
+                    class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-slate-200 text-xs font-medium border border-slate-700">
+              Recargar desde DB
+            </button>
+            <button @click="saveConfig" :disabled="savingConfig"
+                    class="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-medium transition-colors shadow-sm">
+              {{ savingConfig ? 'Guardando…' : 'Aplicar configuración' }}
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ── PIE DE PÁGINA ──────────────────────────────────── -->
+      <footer class="p-4 bg-slate-900/80 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-2 text-xs text-slate-400 font-mono">
+          <i data-lucide="shield-check" class="w-4 h-4 text-emerald-400"></i>
+          <span>Audit Trail activo: SHA-256 por fila en tb_historico_alarmas</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button @click="downloadReport('pdf')"
+                  class="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition-all active:scale-95">
+            <i data-lucide="file-text" class="w-3.5 h-3.5 text-rose-400"></i>
+            <span>Informe PDF</span>
+          </button>
+          <button @click="openExportModal('csv')"
+                  class="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition-all active:scale-95">
+            <i data-lucide="sheet" class="w-3.5 h-3.5 text-emerald-400"></i>
+            <span>CSV Alarmas</span>
+          </button>
+          <button @click="openExportModal('excel')"
+                  class="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-900/40 hover:bg-emerald-800/50 text-emerald-300 text-xs font-medium border border-emerald-700/50 transition-all active:scale-95">
+            <i data-lucide="table" class="w-3.5 h-3.5 text-emerald-400"></i>
+            <span>Excel Completo</span>
+          </button>
+          <button @click="openPurgeModal()"
+                  class="flex items-center gap-2 px-3 py-2 rounded-xl bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 text-xs font-medium border border-rose-800/60 transition-all active:scale-95">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5 text-rose-400"></i>
+            <span>Vaciar Histórico</span>
+          </button>
+        </div>
+      </footer>
+    </div>
+  </main>
+
+  <!-- ── MODAL EXPORTAR EXCEL / CSV ─────────────────────────────────────────── -->
+  <transition enter-active-class="transition duration-200" enter-from-class="opacity-0" leave-active-class="transition duration-150" leave-to-class="opacity-0">
+    <div v-if="showExportModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" @click.self="closeExportModal()">
+      <div class="w-full max-w-md mx-4 rounded-2xl bg-slate-900 border border-emerald-800/50 shadow-2xl shadow-emerald-950/30 overflow-hidden">
+
+        <!-- Header -->
+        <div class="flex items-center gap-3 px-5 py-4 bg-emerald-950/40 border-b border-emerald-800/40">
+          <i data-lucide="download" class="w-5 h-5 text-emerald-400 shrink-0"></i>
+          <div>
+            <p class="text-sm font-semibold text-emerald-200">
+              {{ exportForm.type === 'excel' ? 'Exportar Excel Completo' : 'Exportar CSV de Alarmas' }}
+            </p>
+            <p class="text-[11px] text-emerald-400/80 font-mono">Selecciona el rango de tiempo</p>
+          </div>
+        </div>
+
+        <!-- Body -->
+        <div class="px-5 py-4 space-y-4">
+
+          <!-- Opción todo el histórico -->
+          <div class="flex items-center gap-2">
+            <input type="checkbox" id="export-all-chk" v-model="exportForm.todoHistorico"
+                   class="accent-emerald-500 w-4 h-4 cursor-pointer">
+            <label for="export-all-chk" class="text-xs text-slate-300 cursor-pointer select-none">
+              Descargar <strong>todo el histórico</strong> disponible (sin filtro de fecha)
+            </label>
+          </div>
+
+          <!-- Selectores de rango (deshabilitados si todo=true) -->
+          <div :class="exportForm.todoHistorico ? 'opacity-40 pointer-events-none' : ''" class="space-y-3 transition-opacity">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[11px] text-slate-400 mb-1 font-mono">Fecha/Hora inicio</label>
+                <input type="datetime-local" v-model="exportForm.desde"
+                       class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 text-xs font-mono focus:outline-none focus:border-emerald-500 transition-colors">
+              </div>
+              <div>
+                <label class="block text-[11px] text-slate-400 mb-1 font-mono">Fecha/Hora fin</label>
+                <input type="datetime-local" v-model="exportForm.hasta"
+                       class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 text-xs font-mono focus:outline-none focus:border-emerald-500 transition-colors">
+              </div>
+            </div>
+            <p class="text-[11px] text-slate-500 font-mono">
+              ⓘ El archivo incluirá registros desde el inicio hasta el fin seleccionado, en orden cronológico.
+            </p>
+          </div>
+
+          <!-- Resumen de lo que se descargará -->
+          <div class="rounded-lg p-3 bg-slate-800/60 border border-slate-700/60 text-xs font-mono space-y-0.5">
+            <template v-if="exportForm.type === 'excel'">
+              <p class="text-slate-400">Se generará un archivo con <span class="text-emerald-400 font-semibold">2 hojas</span>:</p>
+              <p class="text-slate-500">• <span class="text-slate-300">Alarmas</span> — eventos de tb_historico_alarmas</p>
+              <p class="text-slate-500">• <span class="text-slate-300">Telemetría</span> — muestras de tb_telemetria</p>
+            </template>
+            <template v-else>
+              <p class="text-slate-400">Se generará un archivo <span class="text-emerald-400 font-semibold">CSV</span> con:</p>
+              <p class="text-slate-500">• <span class="text-slate-300">Alarmas</span> — eventos de tb_historico_alarmas</p>
+            </template>
+            <p class="text-emerald-500 mt-1" v-if="exportForm.todoHistorico">Rango: todo el histórico (hasta 10 000 filas)</p>
+            <p class="text-sky-400 mt-1" v-else-if="exportForm.desde && exportForm.hasta">Rango: {{ exportForm.desde.replace('T',' ') }} → {{ exportForm.hasta.replace('T',' ') }}</p>
+            <p class="text-amber-400 mt-1" v-else>⚠ Selecciona rango de fechas o activa "todo el histórico"</p>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="flex justify-end gap-2 px-5 py-3 border-t border-slate-800">
+          <button @click="closeExportModal()"
+                  class="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium border border-slate-700 transition-colors">
+            Cancelar
+          </button>
+          <button @click="executeExportDownload()"
+                  :disabled="!exportForm.todoHistorico && (!exportForm.desde || !exportForm.hasta)"
+                  class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors">
+            <i data-lucide="download" class="w-3.5 h-3.5"></i>
+            Descargar {{ exportForm.type === 'excel' ? 'Excel' : 'CSV' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+  <!-- ── MODAL PURGA DE HISTÓRICO ────────────────────────────────────── -->
+  <transition enter-active-class="transition duration-200" enter-from-class="opacity-0" leave-active-class="transition duration-150" leave-to-class="opacity-0">
+    <div v-if="showPurgeModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" @click.self="closePurgeModal()">
+      <div class="w-full max-w-sm mx-4 rounded-2xl bg-slate-900 border border-rose-800/60 shadow-2xl shadow-rose-950/40 overflow-hidden">
+
+        <!-- Header -->
+        <div class="flex items-center gap-3 px-5 py-4 bg-rose-950/40 border-b border-rose-800/40">
+          <i data-lucide="trash-2" class="w-5 h-5 text-rose-400 shrink-0"></i>
+          <div>
+            <p class="text-sm font-semibold text-rose-200">Vaciar Histórico de BD</p>
+            <p class="text-[11px] text-rose-400/80 font-mono">tb_historico_alarmas + tb_telemetria</p>
+          </div>
+        </div>
+
+        <!-- Body -->
+        <div class="px-5 py-4 space-y-4">
+          <p class="text-xs text-slate-400">Elimina todos los registros dentro del rango seleccionado. Esta acción <span class="text-rose-300 font-semibold">no se puede deshacer</span>.</p>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1 font-mono">Desde (fecha inicio)</label>
+              <input type="date" v-model="purgeForm.fecha_inicio"
+                     class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 text-xs font-mono focus:outline-none focus:border-rose-500 transition-colors">
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1 font-mono">Hasta (fecha fin)</label>
+              <input type="date" v-model="purgeForm.fecha_fin"
+                     class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 text-xs font-mono focus:outline-none focus:border-rose-500 transition-colors">
+            </div>
+          </div>
+
+          <!-- Resultado tras purga -->
+          <div v-if="purgeResult" class="rounded-xl p-3 text-xs font-mono space-y-1"
+               :class="purgeResult.ok ? 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300' : 'bg-rose-950/40 border border-rose-800/40 text-rose-300'">
+            <div v-if="purgeResult.ok">
+              <p class="font-semibold">✓ Purga completada</p>
+              <p>Alarmas eliminadas: <span class="text-white font-bold">{{ purgeResult.eliminadas_alarmas }}</span></p>
+              <p>Telemetría eliminada: <span class="text-white font-bold">{{ purgeResult.eliminadas_telemetria }}</span></p>
+              <p class="text-emerald-500">{{ purgeResult.rango.desde }} → {{ purgeResult.rango.hasta }}</p>
+            </div>
+            <div v-else>
+              <p class="font-semibold">✗ Error en purga</p>
+              <p>{{ purgeResult.error }}</p>
+            </div>
+          </div>
+
+          <!-- Confirmación de doble paso -->
+          <div v-if="!purgeResult" class="flex items-center gap-2 p-2.5 rounded-lg bg-amber-950/30 border border-amber-800/40">
+            <input type="checkbox" id="purge-confirm-chk" v-model="purgeForm.confirmado"
+                   class="accent-rose-500 w-4 h-4 cursor-pointer">
+            <label for="purge-confirm-chk" class="text-[11px] text-amber-300 cursor-pointer select-none">
+              Entiendo que esta acción es <strong>irreversible</strong> y elimina datos permanentemente
+            </label>
+          </div>
+        </div>
+
+        <!-- Footer botones -->
+        <div class="flex justify-end gap-2 px-5 py-3 border-t border-slate-800">
+          <button @click="closePurgeModal()"
+                  class="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium border border-slate-700 transition-colors">
+            {{ purgeResult && purgeResult.ok ? 'Cerrar' : 'Cancelar' }}
+          </button>
+          <button v-if="!purgeResult" @click="executePurge()"
+                  :disabled="!purgeForm.confirmado || !purgeForm.fecha_inicio || !purgeForm.fecha_fin || purgeBusy"
+                  class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-rose-700 hover:bg-rose-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            {{ purgeBusy ? 'Eliminando…' : 'Ejecutar Purga' }}
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </transition>
+
+  <!-- ── TOAST ──────────────────────────────────────────────── -->
+  <transition
+    enter-active-class="transform transition ease-out duration-300"
+    enter-from-class="translate-y-2 opacity-0"
+    enter-to-class="translate-y-0 opacity-100"
+    leave-active-class="transition ease-in duration-200"
+    leave-from-class="opacity-100"
+    leave-to-class="opacity-0">
+    <div v-if="toastMessage"
+         class="fixed bottom-6 right-6 flex items-center gap-2 px-4 py-3 rounded-xl bg-slate-900 border border-slate-700 text-slate-200 text-xs shadow-2xl z-50 font-mono"
+         :class="toastError ? 'border-rose-700' : 'border-slate-700'">
+      <i :data-lucide="toastError ? 'alert-circle' : 'check-circle'"
+         class="w-4 h-4" :class="toastError ? 'text-rose-400' : 'text-emerald-400'"></i>
+      <span>{{ toastMessage }}</span>
+    </div>
+  </transition>
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted, onUnmounted, nextTick, watch } = Vue;
+
+// ─── Configuración ────────────────────────────────────────────────────────────
+const API_BASE   = 'http://127.0.0.1:5000';
+const WELL_ID    = 'FUL-01';
+const POLL_MS    = 1000;   // polling live = 1 s
+const ALARM_MS   = 3000;   // polling alarmas = 3 s
+const CONFIG_MS  = 10000;  // polling configuración = 10 s
+const SPARK_LEN  = 20;     // muestras en sparkline
+
+// ─── Helpers de sparkline SVG ─────────────────────────────────────────────────
+function buildSparkPaths(buffer) {
+  if (!buffer || buffer.length < 2) return { path: '', areaPath: '' };
+  const vals = buffer.slice(-SPARK_LEN);
+  const mn   = Math.min(...vals);
+  const mx   = Math.max(...vals);
+  const rng  = mx - mn || 1;
+  const pts  = vals.map((v, i) => {
+    const x = (i / (vals.length - 1)) * 100;
+    const y = 22 - ((v - mn) / rng) * 18;   // invertido: mayor y = abajo
+    return [x, y];
+  });
+  const line = pts.map((p, i) => (i === 0 ? `M ${p[0]},${p[1]}` : `L ${p[0]},${p[1]}`)).join(' ');
+  const area = line + ` L 100,24 L 0,24 Z`;
+  return { path: line, areaPath: area };
+}
+
+// ─── App Vue ──────────────────────────────────────────────────────────────────
+createApp({
+  setup() {
+    const isExpanded    = ref(false);
+    const healthScore   = ref(100);
+    const activeTab     = ref('live');
+    const formattedTime = ref('');
+    const toastMessage  = ref('');
+    const toastError    = ref(false);
+    const lastSync      = ref('');
+    const apiOnline     = ref(false);
+    const savingConfig  = ref(false);
+    const wellId        = ref(WELL_ID);
+
+    // Estado de conexión PLC
+    const plcConnected  = ref(null);   // null=desconocido, true=online, false=offline
+    const plcLastOkAgo  = ref(null);   // segundos desde última lectura exitosa
+    const plcDataAge    = ref(null);   // segundos desde el último dato en BD
+
+    // Timers para limpiar al destruir el componente
+    const timers = [];
+
+    // ── Tabs ──────────────────────────────────────────────────────────────
+    const tabs = [
+      { id: 'overview', name: 'General',       icon: 'compass',   badge: null },
+      { id: 'live',     name: 'Monitor',        icon: 'activity',  badge: '8 VARS', badgeClass: 'bg-sky-500/20 text-sky-300' },
+      { id: 'layers',   name: 'Diagnóstico',    icon: 'layers',    badge: null },
+      { id: 'alarms',   name: 'Alarmas',        icon: 'bell',      badge: null, badgeClass: 'bg-amber-500/20 text-amber-300' },
+      { id: 'config',   name: 'Configuración',  icon: 'sliders',   badge: null },
+    ];
+
+    // ── 8 Variables de proceso (con buffer de sparkline) ──────────────────
+    const sparkBuffers = {};
+
+    const liveVariables = ref([
+      { key: 'p',       name: 'Presión Línea',      symbol: 'P',      value: '—',  unit: 'psig', delta: 0, min: '—', max: '—', alert: false, path: '', areaPath: '' },
+      { key: 't',       name: 'Temperatura',         symbol: 'T',      value: '—',  unit: '°F',   delta: 0, min: '—', max: '—', alert: false, path: '', areaPath: '' },
+      { key: 'dp_w',    name: 'ΔP Cuña (Wedge)',     symbol: 'ΔP Cuña',value: '—',  unit: 'inH₂O',delta: 0, min: '—', max: '—', alert: false, path: '', areaPath: '' },
+      { key: 'dp_l',    name: 'ΔP Laminar',          symbol: 'ΔP Lam', value: '—',  unit: 'inH₂O',delta: 0, min: '—', max: '—', alert: false, path: '', areaPath: '' },
+      { key: 'visc',    name: 'Viscosidad',           symbol: 'μ',      value: '—',  unit: 'cP',   delta: 0, min: '—', max: '—', alert: false, path: '', areaPath: '' },
+      { key: 'wc',      name: 'Corte de Agua',        symbol: 'WC%',    value: '—',  unit: '%',    delta: 0, min: '—', max: '—', alert: false, path: '', areaPath: '' },
+      { key: 'level',   name: 'Nivel Separador',      symbol: 'Nivel',  value: '—',  unit: '%',    delta: 0, min: '—', max: '—', alert: false, path: '', areaPath: '' },
+      { key: 'gas',     name: 'Flujo de Gas',         symbol: 'Q_gas',  value: '—',  unit: 'Mscfd',delta: 0, min: '—', max: '—', alert: false, path: '', areaPath: '' },
+    ]);
+
+    // Helpers para acceder a variables por key
+    function liveVar(key, fallback = '—') {
+      const v = liveVariables.value.find(x => x.key === key);
+      return v ? v.value : fallback;
+    }
+
+    function updateVariable(key, newVal) {
+      const v = liveVariables.value.find(x => x.key === key);
+      if (!v || newVal === null || newVal === undefined) return;
+      const n = parseFloat(newVal);
+      if (isNaN(n)) return;
+      const old = parseFloat(v.value) || n;
+      v.delta = old !== 0 ? parseFloat(((n - old) / Math.abs(old) * 100).toFixed(1)) : 0;
+      v.value = n.toFixed(2);
+
+      if (!sparkBuffers[key]) sparkBuffers[key] = [];
+      sparkBuffers[key].push(n);
+      if (sparkBuffers[key].length > SPARK_LEN) sparkBuffers[key].shift();
+
+      const buf = sparkBuffers[key];
+      v.min     = Math.min(...buf).toFixed(2);
+      v.max     = Math.max(...buf).toFixed(2);
+      const sp  = buildSparkPaths(buf);
+      v.path     = sp.path;
+      v.areaPath = sp.areaPath;
+    }
+
+    // ── Alarmas ───────────────────────────────────────────────────────────
+    const alarmLogs = ref([]);
+    const activeAlarms = computed(() =>
+      alarmLogs.value.filter(a => ['WARNING','CRITICAL','FATAL'].includes(a.severidad)).length
+    );
+
+    // ── Diagnóstico por capas (derivado de la última respuesta live) ───────
+    const diagnosticLayers = ref([
+      {
+        id: 'CAPA 1', name: 'Estadísticas de Sensores',
+        desc: 'Señal congelada (flatline), outliers por Z-score en ventana móvil.',
+        status: 'OK',
+        checks: [
+          { label: 'Señal congelada', val: 'OK', ok: true },
+          { label: 'Outlier Z-score', val: 'OK', ok: true },
+        ]
+      },
+      {
+        id: 'CAPA 2', name: 'Coherencia Hidráulica',
+        desc: 'Cross-check DP Cuña vs Laminar, nivel vs LCV, GVF SONAR.',
+        status: 'OK',
+        checks: [
+          { label: 'DP Total Skid',    val: 'OK', ok: true },
+          { label: 'Nivel vs LCV',     val: 'OK', ok: true },
+          { label: 'Medidor activo',   val: 'OK', ok: true },
+        ]
+      },
+      {
+        id: 'CAPA 3', name: 'Comportamiento del Pozo',
+        desc: 'Balance másico líquido, RGP vs histórico, presión de línea.',
+        status: 'OK',
+        checks: [
+          { label: 'Balance Q_oil/WC', val: 'OK', ok: true },
+          { label: 'RGP vs diseño',    val: 'OK', ok: true },
+          { label: 'Presión línea',    val: 'OK', ok: true },
+        ]
+      },
+    ]);
+
+    // ── Tarjetas WOE (se rellenan desde /api/configuracion) ───────────────
+    const woeCards = ref([
+      { label: 'Gravedad API',    tag: 'PVT',   value: '—',  unit: '°API',    hint: 'Crudo del pozo' },
+      { label: 'GOR Previsto',    tag: 'Gas/Oil',value: '—',  unit: 'scf/STB', hint: 'RGP de diseño' },
+      { label: 'Q Max Líquido',   tag: 'Rate',  value: '—',  unit: 'BPD',     hint: 'Límite máximo' },
+      { label: 'DP Max Skid',     tag: 'Hidráulica', value: '—', unit: 'psi', hint: 'Umbral metrológico' },
+    ]);
+
+    // ── Configuración (form) ──────────────────────────────────────────────
+    const configForm = ref({
+      api_gravity:             26.9,
+      expected_gor_scf_stb:    850.0,
+      gor_tolerance_pct:        30.0,
+      max_dp_psi:               10.0,
+      viscosity_transition_cp:  15.0,
+      outlier_zscore_threshold:  3.5,
+      window_size_samples:        30,
+      p_line_min_psig:           30.0,
+      p_line_max_psig:          350.0,
+      abs_min_wc_pct:            5.0,
+      abs_min_p_line_psig:      15.0,
+      abs_min_t_proc_f:          5.0,
+      abs_min_dp_wedge_inh2o:   20.0,
+      abs_min_dp_laminar_inh2o: 10.0,
+      abs_min_viscosity_cp:      5.0,
+      abs_min_level_pct:        10.0,
+      abs_min_sonar_gas_pct:     5.0,
+    });
+
+    const configFieldsLeft = [
+      { key: 'api_gravity',            label: 'Gravedad API (°API)',          step: 0.1 },
+      { key: 'expected_gor_scf_stb',   label: 'RGP esperada (scf/STB)',        step: 1   },
+      { key: 'gor_tolerance_pct',      label: 'Tolerancia RGP (%)',            step: 0.5 },
+      { key: 'max_dp_psi',             label: 'ΔP Máx Skid (psi)',             step: 0.1 },
+      { key: 'viscosity_transition_cp',label: 'Viscosidad Transición (cP)',    step: 0.5 },
+      { key: 'abs_min_wc_pct',         label: 'Spike ROC Corte Agua (%)',      step: 0.5 },
+      { key: 'abs_min_p_line_psig',    label: 'Spike ROC P. Línea (psig)',     step: 0.5 },
+      { key: 'abs_min_t_proc_f',       label: 'Spike ROC T. Proceso (°F)',     step: 0.5 },
+      { key: 'abs_min_dp_wedge_inh2o', label: 'Spike ROC DP Wedge (inH2O)',    step: 0.5 },
+    ];
+    const configFieldsRight = [
+      { key: 'outlier_zscore_threshold', label: 'Z-Score umbral outlier',        step: 0.1 },
+      { key: 'window_size_samples',      label: 'Ventana estadística (muestras)', step: 1   },
+      { key: 'p_line_min_psig',          label: 'P Línea mínima (psig)',          step: 1   },
+      { key: 'p_line_max_psig',          label: 'P Línea máxima (psig)',          step: 1   },
+      { key: 'abs_min_dp_laminar_inh2o', label: 'Spike ROC DP Laminar (inH2O)',  step: 0.5 },
+      { key: 'abs_min_viscosity_cp',     label: 'Spike ROC Viscosidad (cP)',     step: 0.5 },
+      { key: 'abs_min_level_pct',        label: 'Spike ROC Nivel Separador (%)', step: 0.5 },
+      { key: 'abs_min_sonar_gas_pct',    label: 'Spike ROC GVF Sonar (%)',       step: 0.5 },
+    ];
+
+    // ── Computed de salud ─────────────────────────────────────────────────
+    const statusText = computed(() => {
+      if (healthScore.value >= 90) return 'SANO';
+      if (healthScore.value >= 70) return 'ADVERTENCIA';
+      return 'CRÍTICO';
+    });
+    const statusBadgeClasses = computed(() => {
+      if (healthScore.value >= 90) return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+      if (healthScore.value >= 70) return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
+      return 'bg-rose-500/10 text-rose-400 border-rose-500/30';
+    });
+    const statusDotClass = computed(() => {
+      if (healthScore.value >= 90) return 'bg-emerald-400 pulse-indicator';
+      if (healthScore.value >= 70) return 'bg-amber-400 pulse-indicator';
+      return 'bg-rose-400 pulse-indicator';
+    });
+    const healthColorHex = computed(() => {
+      if (healthScore.value >= 90) return '#10B981';
+      if (healthScore.value >= 70) return '#F59E0B';
+      return '#EF4444';
+    });
+    const healthTextClass = computed(() => {
+      if (healthScore.value >= 90) return 'text-emerald-400';
+      if (healthScore.value >= 70) return 'text-amber-400';
+      return 'text-rose-400';
+    });
+
+    // ── Helpers UI ────────────────────────────────────────────────────────
+    function severityClass(sev) {
+      const m = {
+        INFO:     'bg-slate-700 text-slate-300 border border-slate-600',
+        WARNING:  'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+        CRITICAL: 'bg-rose-500/20 text-rose-300 border border-rose-500/40',
+        FATAL:    'bg-red-900/60 text-red-200 border border-red-700',
+        SISTEMA:  'bg-purple-500/20 text-purple-300 border border-purple-500/40',
+      };
+      return m[sev] || m.INFO;
+    }
+
+    function formatAlarmTs(ts) {
+      if (!ts) return '—';
+      try {
+        return new Date(ts).toLocaleTimeString('es-VE', { hour12: false });
+      } catch { return ts; }
+    }
+
+    function showToast(msg, err = false) {
+      toastMessage.value = msg;
+      toastError.value   = err;
+      nextTick(() => lucide.createIcons());
+      setTimeout(() => { toastMessage.value = ''; }, 3500);
+    }
+
+    // ── Resize de ventana pywebview ───────────────────────────────────────
+    async function resizeWindow(w, h) {
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.resize) {
+        await window.pywebview.api.resize(w, h);
+      }
+    }
+
+    function toggleExpand() {
+      isExpanded.value = !isExpanded.value;
+      nextTick(async () => {
+        lucide.createIcons();
+        // Redimensionar ventana pywebview automáticamente
+        if (isExpanded.value) {
+          await resizeWindow(900, 680);
+        } else {
+          await resizeWindow(420, 160);
+        }
+      });
+    }
+
+    function closeWindow() {
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.close_app) {
+        window.pywebview.api.close_app();
+      }
+    }
+
+    // ── Fetch: /api/monitoreo/live ────────────────────────────────────────
+    async function fetchLive() {
+      try {
+        const res  = await fetch(`${API_BASE}/api/monitoreo/live`, { cache: 'no-store' });
+        if (!res.ok) { apiOnline.value = false; return; }
+        const data = await res.json();
+        if (!data.ok) return;
+
+        apiOnline.value = true;
+        healthScore.value = Math.round(data.diagnostico?.health_score ?? 100);
+        lastSync.value = new Date().toLocaleTimeString('es-VE', { hour12: false });
+
+        // Estado PLC desde la respuesta /live
+        if (data.plc_connected !== undefined && data.plc_connected !== null) {
+          plcConnected.value = data.plc_connected;
+          plcLastOkAgo.value = data.plc_last_ok_ago_s;
+        }
+        // Edad del último dato en BD
+        if (data.data_age_s !== undefined && data.data_age_s !== null) {
+          plcDataAge.value = data.data_age_s;
+        }
+
+        const p  = data.presiones     || {};
+        const t  = data.temperaturas  || {};
+        const dp = data.dp_medidores  || {};
+        const fl = data.fluido        || {};
+        const ct = data.control       || {};
+        const caud = data.caudales    || {};
+
+        updateVariable('p',     p.entrada_psig ?? p.gas_psig);
+        updateVariable('t',     t.aceite_f);
+        updateVariable('dp_w',  dp.cunia_inH2O);
+        updateVariable('dp_l',  dp.laminar_inH2O);
+        updateVariable('visc',  fl.viscosidad_calculada_cp);
+        updateVariable('wc',    fl.corte_agua_pct);
+        updateVariable('level', ct.nivel_separador_pct);
+        updateVariable('gas',   caud.gas_std);
+
+        // Actualizar capas desde las anomalías (inferencia simple)
+        const anomalias = [];
+        // (Backend ya envía stat_health/hyd_health/well_health en la alarma, no en live)
+        // Inferimos estado de capas por el health_score y status
+        const score = healthScore.value;
+        diagnosticLayers.value.forEach(l => {
+          l.status = score >= 90 ? 'OK' : score >= 70 ? 'WARN' : 'FAIL';
+        });
+        // Marcar alert en variables si score es bajo
+        liveVariables.value.forEach(v => {
+          v.alert = score < 90;
+        });
+
+      } catch (e) {
+        apiOnline.value = false;
+      }
+    }
+
+    // ── Fetch: /api/alarmas ───────────────────────────────────────────────
+    async function fetchAlarms() {
+      try {
+        const res  = await fetch(`${API_BASE}/api/alarmas?limit=50&well_id=${WELL_ID}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.ok) {
+          alarmLogs.value = data.alarmas || [];
+          // Actualizar badge de tab alarmas
+          const cnt = alarmLogs.value.filter(a => ['WARNING','CRITICAL','FATAL'].includes(a.severidad)).length;
+          tabs.find(t => t.id === 'alarms').badge = cnt > 0 ? String(cnt) : null;
+        }
+      } catch (e) { /* offline */ }
+    }
+
+    // ── Fetch: /api/monitoreo/plc-status ──────────────────────────────────
+    async function fetchPlcStatus() {
+      try {
+        const res = await fetch(`${API_BASE}/api/monitoreo/plc-status`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.ok !== false) {
+          plcConnected.value  = data.plc_connected;
+          plcLastOkAgo.value  = data.last_ok_ago_s;
+        }
+      } catch (e) {
+        // Si la API no responde, no actualizar el estado PLC
+      }
+    }
+
+    // ── Fetch: /api/configuracion ─────────────────────────────────────────
+    async function fetchConfig() {
+      try {
+        const res  = await fetch(`${API_BASE}/api/configuracion?well_id=${WELL_ID}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.ok) return;
+        const cfg = data.configuracion;
+        // Actualizar form
+        Object.keys(configForm.value).forEach(k => {
+          if (cfg[k] !== undefined) configForm.value[k] = cfg[k];
+        });
+        // Actualizar WOE cards
+        woeCards.value[0].value = parseFloat(cfg.api_gravity).toFixed(1);
+        woeCards.value[1].value = parseFloat(cfg.expected_gor_scf_stb).toFixed(0);
+        woeCards.value[2].value = parseFloat(cfg.max_liquid_rate_bpd).toFixed(0);
+        woeCards.value[3].value = parseFloat(cfg.max_dp_psi).toFixed(1);
+      } catch (e) { /* offline */ }
+    }
+
+    // ── Guardar configuración ─────────────────────────────────────────────
+    async function saveConfig() {
+      savingConfig.value = true;
+      try {
+        const payload = { well_id: WELL_ID, ...configForm.value };
+        // Convertir a números
+        Object.keys(payload).forEach(k => { payload[k] = parseFloat(payload[k]) || payload[k]; });
+        const res = await fetch(`${API_BASE}/api/configuracion`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          showToast(`Configuración actualizada — ID ${data.nuevo_id} | Campos: ${data.campos_actualizados.join(', ')}`);
+          await fetchConfig();
+        } else {
+          showToast(data.error || 'Error al guardar', true);
+        }
+      } catch (e) {
+        showToast('Sin conexión con la API', true);
+      } finally {
+        savingConfig.value = false;
+      }
+    }
+
+    async function resetConfig() {
+      await fetchConfig();
+      showToast('Configuración recargada desde la base de datos.');
+    }
+
+    // ── Modal Exportar CSV/Excel con rango de fecha/hora ────────────────────────────────
+    const showExportModal = Vue.ref(false);
+    const exportForm = Vue.reactive({
+      type:           'excel', // 'excel' o 'csv'
+      desde:          '',
+      hasta:          '',
+      todoHistorico:  false,
+    });
+
+    function openExportModal(type) {
+      exportForm.type = type;
+      // Pre-rellenar con el día actual como rango sugerido
+      const now   = new Date();
+      const pad   = n => String(n).padStart(2, '0');
+      const today = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+      exportForm.desde         = `${today}T00:00`;
+      exportForm.hasta         = `${today}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      exportForm.todoHistorico = false;
+      showExportModal.value    = true;
+      nextTick(() => lucide.createIcons());
+    }
+
+    function closeExportModal() {
+      showExportModal.value = false;
+    }
+
+    function executeExportDownload() {
+      const endpoint = exportForm.type === 'excel' ? 'reporte.xlsx' : 'alarmas.csv';
+      let url = `${API_BASE}/api/exportacion/${endpoint}?well_id=${WELL_ID}&limit=10000`;
+      if (!exportForm.todoHistorico && exportForm.desde && exportForm.hasta) {
+        url += `&desde=${encodeURIComponent(exportForm.desde)}&hasta=${encodeURIComponent(exportForm.hasta)}`;
+      }
+      window.open(url, '_blank');
+      const lbl = exportForm.todoHistorico
+        ? 'todo el histórico'
+        : `${exportForm.desde.replace('T',' ')} → ${exportForm.hasta.replace('T',' ')}`;
+      const formatLabel = exportForm.type === 'excel' ? 'Excel' : 'CSV';
+      showToast(`Generando ${formatLabel} (${lbl})…`);
+      closeExportModal();
+    }
+
+    // ── Purga de histórico ────────────────────────────────────────────────
+    const showPurgeModal = Vue.ref(false);
+    const purgeBusy      = Vue.ref(false);
+    const purgeResult    = Vue.ref(null);
+    const purgeForm      = Vue.reactive({
+      fecha_inicio: '',
+      fecha_fin:    '',
+      confirmado:   false,
+    });
+
+    function openPurgeModal() {
+      purgeForm.fecha_inicio = '';
+      purgeForm.fecha_fin    = '';
+      purgeForm.confirmado   = false;
+      purgeResult.value      = null;
+      showPurgeModal.value   = true;
+      nextTick(() => lucide.createIcons());
+    }
+
+    function closePurgeModal() {
+      showPurgeModal.value = false;
+      purgeResult.value    = null;
+      if (purgeResult.value?.ok) fetchAlarms();
+    }
+
+    async function executePurge() {
+      if (!purgeForm.confirmado || !purgeForm.fecha_inicio || !purgeForm.fecha_fin) return;
+      purgeBusy.value = true;
+      try {
+        const res = await fetch(`${API_BASE}/api/alarmas/purge`, {
+          method:  'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            fecha_inicio: purgeForm.fecha_inicio,
+            fecha_fin:    purgeForm.fecha_fin,
+            well_id:      WELL_ID,
+            confirmar:    true,
+          }),
+        });
+        const data = await res.json();
+        purgeResult.value = data;
+        if (data.ok) {
+          showToast(`Purga exitosa: ${data.eliminadas_alarmas} alarmas y ${data.eliminadas_telemetria} registros de telemetría eliminados.`);
+          await fetchAlarms();
+        } else {
+          showToast(data.error || 'Error en la purga.', true);
+        }
+      } catch (e) {
+        purgeResult.value = { ok: false, error: String(e) };
+        showToast('Error de conexión al ejecutar la purga.', true);
+      } finally {
+        purgeBusy.value = false;
+        nextTick(() => lucide.createIcons());
+      }
+    }
+
+    // ── Descarga de informe ──────────────────────────────────────────────
+    function downloadReport(type) {
+      if (type === 'pdf') {
+        showToast(`Formato ${type.toUpperCase()} no implementado aún.`);
+      } else {
+        openExportModal(type);
+      }
+    }
+
+    // ── Reloj local ────────────────────────────────────────────────────────
+    function updateClock() {
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const fecha = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+      const hora  = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+      formattedTime.value = `${fecha} ${hora}`;
+    }
+
+    // ── Ciclo de vida ─────────────────────────────────────────────────────
+    onMounted(async () => {
+      updateClock();
+      lucide.createIcons();
+
+      // Cargar datos iniciales
+      await fetchConfig();
+      await fetchLive();
+      await fetchAlarms();
+      await fetchPlcStatus();
+
+      // Polling continuo
+      timers.push(setInterval(fetchLive,      POLL_MS));
+      timers.push(setInterval(fetchAlarms,    ALARM_MS));
+      timers.push(setInterval(fetchConfig,    CONFIG_MS));
+      timers.push(setInterval(fetchPlcStatus, 2000));
+      timers.push(setInterval(updateClock,    1000));
+      timers.push(setInterval(() => nextTick(() => lucide.createIcons()), 2000));
+    });
+
+    onUnmounted(() => { timers.forEach(clearInterval); });
+
+    return {
+      isExpanded, healthScore, activeTab, formattedTime, toastMessage, toastError,
+      lastSync, apiOnline, savingConfig, wellId,
+      plcConnected, plcLastOkAgo, plcDataAge,
+      tabs, liveVariables, alarmLogs, alarmLogs, activeAlarms,
+      diagnosticLayers, woeCards, configForm, configFieldsLeft, configFieldsRight,
+      statusText, statusBadgeClasses, statusDotClass, healthColorHex, healthTextClass,
+      toggleExpand, closeWindow, saveConfig, resetConfig, downloadReport,
+      severityClass, formatAlarmTs, liveVar,
+      showPurgeModal, purgeForm, purgeResult, purgeBusy,
+      openPurgeModal, closePurgeModal, executePurge,
+      showExportModal, exportForm,
+      openExportModal, closeExportModal, executeExportDownload,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

@@ -85,7 +85,9 @@ class SimPLCReader:
             "CORIOLIS_DENSITY",
             "CORIOLIS_TEMPERATURE",
             "CORIOLIS_VOL_FLOW_RATE",
-            "PRESION_ENTRADA"
+            "PRESION_ENTRADA",
+            "Program:Caudal.wedge",
+            
         ]
 
     def read_all_tags(self):

@@ -41,6 +41,9 @@ class WellOperatingEnvelope:
     spike_roc_factor: float = 3.0           # Factor k: |Δval| > k*ref_std → spike
     wc_operational_max_pct: float = 97.0    # WC máximo operacional del pozo (%)
     wc_max_delta_per_cycle_pct: float = 15.0  # Cambio máx de WC permitido por ciclo (%)
+    dp_min_threshold: float = 0.1           # DP mínimo metrológico (inH2O)
+    min_sonar_gas_pct: float = 0.0          # Límite mínimo de GVF
+    max_sonar_gas_pct: float = 30.0         # Límite máximo de GVF
     # Umbrales mínimos de variación absoluta para Spike (ROC)
     abs_min_wc_pct: float = 5.0
     abs_min_p_line_psig: float = 15.0
@@ -211,14 +214,14 @@ class MPFMSelfVerification:
         # 2.2 Validación Cruzada: Medidor Cuña vs. Laminar según Viscosidad
         if visc > self.env.viscosity_transition_cp:
             # Régimen Viscoso / Laminar: Hagen-Poiseuille domina (DP_laminar debe ser representativo)
-            if dp_laminar <= 0.1 and q_liquid_bpd > self.env.min_liquid_rate_bpd:
+            if dp_laminar <= self.env.dp_min_threshold and q_liquid_bpd > self.env.min_liquid_rate_bpd:
                 coherence['meter_selection_valid'] = False
                 alerts.append(f"INCOHERENCIA METROLÓGICA: Alta viscosidad ({visc:.1f} cP) sin respuesta en medidor laminar")
             else:
                 coherence['meter_selection_valid'] = True
         else:
             # Régimen Turbulento / Baja Viscosidad: Ecuación de Bernoulli / Cuña
-            if dp_wedge <= 0.1 and q_liquid_bpd > self.env.min_liquid_rate_bpd:
+            if dp_wedge <= self.env.dp_min_threshold and q_liquid_bpd > self.env.min_liquid_rate_bpd:
                 coherence['meter_selection_valid'] = False
                 alerts.append(f"INCOHERENCIA METROLÓGICA: Baja viscosidad ({visc:.1f} cP) sin respuesta en medidor Cuña (Wedge)")
             else:
@@ -236,7 +239,7 @@ class MPFMSelfVerification:
             coherence['level_control_coherence'] = True
 
         # 2.4 Límite del Sonar de Gas Arrastrado
-        if sonar_gas < 0.0 or sonar_gas > 30.0:
+        if sonar_gas < self.env.min_sonar_gas_pct or sonar_gas > self.env.max_sonar_gas_pct:
             coherence['sonar_gas_ok'] = False
             alerts.append(f"ALERTA INSTRUMENTO: Fracción de gas arrastrado (SONAR) fuera de rango físico ({sonar_gas:.2f}%)")
         else:
@@ -254,6 +257,7 @@ class MPFMSelfVerification:
         q_oil        = current.get('Q_oil_bpd', 0.0)
         q_liquid     = current.get('Q_liquid_bpd', 0.0)
         q_gas_mmscfd = current.get('Q_gas_mmscfd', 0.0)
+        q_diluent    = current.get('Q_diluent_bpd', 0.0)
         wc           = current.get('WaterCut_pct', 0.0)
         p_line       = current.get('P_line_psig', 240.0)
 
@@ -294,7 +298,7 @@ class MPFMSelfVerification:
             coherence['water_cut_rate_of_change'] = True
 
         # 3.4 Balance de Tasa de Crudo / Agua / Líquido Total
-        expected_oil = q_liquid * (1.0 - (wc / 100.0))
+        expected_oil = (q_liquid * (1.0 - (wc / 100.0))) - q_diluent
         if q_liquid > self.env.min_liquid_rate_bpd:
             diff_oil_pct = abs(expected_oil - q_oil) / q_liquid * 100.0
             if diff_oil_pct > 5.0:  # Tolerancia máxima balance de fases líquidas

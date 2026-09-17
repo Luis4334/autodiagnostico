@@ -174,6 +174,7 @@ def map_plc_tags_to_telemetry(raw: Dict[str, Any]) -> Dict[str, Any]:
         "Q_liquid_bpd":            _safe_float(raw.get("Q_Liquido"),       0.0),
         "Q_oil_bpd":               _safe_float(raw.get("Q_Crudo"),         0.0),
         "Q_gas_mmscfd":            Q_GAS_MMSCFD,
+        "Q_diluent_bpd":           _safe_float(raw.get("caudal_diluente_BM"), 0.0),
 
         # ── Variables extendidas (para tb_telemetria) ────────────────────
         "p_gas_psig":              _safe_float(raw.get("P_Gas"),           None),
@@ -600,6 +601,25 @@ class BackendAutodiagnostico:
                     self._plc_connected  = True
                     self._plc_last_ok_ts = time.monotonic()
                     self._plc_last_error = ""
+
+                # ── 1.5 Sincronizar configuración de DB ──────────────────
+                self._reconnect_db()
+                if self._conn:
+                    try:
+                        import decimal
+                        with self._conn.cursor(pymysql.cursors.DictCursor) as cur:
+                            cur.execute(
+                                "SELECT * FROM tb_config_pozo WHERE well_id = %s AND is_active = 1 ORDER BY id DESC LIMIT 1",
+                                (WELL_ID,)
+                            )
+                            row = cur.fetchone()
+                            if row:
+                                valid_keys = self.verifier.env.__dataclass_fields__.keys()
+                                for k, v in row.items():
+                                    if k in valid_keys:
+                                        setattr(self.verifier.env, k, float(v) if isinstance(v, decimal.Decimal) else v)
+                    except Exception as exc:
+                        logger.warning("[Ciclo %d] Error leyendo tb_config_pozo: %s", self._cycle_count, exc)
 
                 # ── 2. Mapeo de tags ─────────────────────────────────────
                 mapped = map_plc_tags_to_telemetry(raw_tags)

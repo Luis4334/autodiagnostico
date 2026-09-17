@@ -50,6 +50,10 @@ EDITABLE_FIELDS: Dict[str, type] = {
     "abs_min_viscosity_cp":     float,
     "abs_min_level_pct":        float,
     "abs_min_sonar_gas_pct":    float,
+    "dp_min_threshold":         float,
+    "min_sonar_gas_pct":        float,
+    "wc_operational_max_pct":   float,
+    "wc_max_delta_per_cycle_pct": float,
 }
 
 # Rangos de validación física mínimos
@@ -78,6 +82,10 @@ FIELD_RANGES: Dict[str, Tuple[float, float]] = {
     "abs_min_viscosity_cp":     (0.1,   100.0),
     "abs_min_level_pct":        (0.1,   100.0),
     "abs_min_sonar_gas_pct":    (0.1,   100.0),
+    "dp_min_threshold":         (0.001, 100.0),
+    "min_sonar_gas_pct":        (0.0,   100.0),
+    "wc_operational_max_pct":   (0.0,   100.0),
+    "wc_max_delta_per_cycle_pct": (0.0, 100.0),
 }
 
 # SQL de lectura
@@ -93,6 +101,7 @@ SELECT
     window_size_samples, frozen_tag_std_threshold, outlier_zscore_threshold,
     abs_min_wc_pct, abs_min_p_line_psig, abs_min_t_proc_f, abs_min_dp_wedge_inh2o,
     abs_min_dp_laminar_inh2o, abs_min_viscosity_cp, abs_min_level_pct, abs_min_sonar_gas_pct,
+    dp_min_threshold, min_sonar_gas_pct, wc_operational_max_pct, wc_max_delta_per_cycle_pct,
     is_active, created_at, updated_at
 FROM tb_config_pozo
 WHERE well_id = %s AND is_active = 1
@@ -254,6 +263,10 @@ def post_configuracion():
         "abs_min_viscosity_cp":     updated.get("abs_min_viscosity_cp",    current["abs_min_viscosity_cp"]),
         "abs_min_level_pct":        updated.get("abs_min_level_pct",       current["abs_min_level_pct"]),
         "abs_min_sonar_gas_pct":    updated.get("abs_min_sonar_gas_pct",   current["abs_min_sonar_gas_pct"]),
+        "dp_min_threshold":         updated.get("dp_min_threshold",        current["dp_min_threshold"]),
+        "min_sonar_gas_pct":        updated.get("min_sonar_gas_pct",       current["min_sonar_gas_pct"]),
+        "wc_operational_max_pct":   updated.get("wc_operational_max_pct",  current["wc_operational_max_pct"]),
+        "wc_max_delta_per_cycle_pct": updated.get("wc_max_delta_per_cycle_pct", current["wc_max_delta_per_cycle_pct"]),
         "is_active":                1,
     }
 

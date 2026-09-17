@@ -60,6 +60,12 @@ CREATE TABLE IF NOT EXISTS tb_config_pozo (
     p_line_min_psig             DECIMAL(8,2)    NOT NULL DEFAULT 30.00   COMMENT 'Presión mínima de aforo (psig)',
     p_line_max_psig             DECIMAL(8,2)    NOT NULL DEFAULT 350.00  COMMENT 'Presión máxima de aforo (psig)',
 
+    -- Parámetros adicionales configurables
+    dp_min_threshold            DECIMAL(7,3)    NOT NULL DEFAULT 0.100   COMMENT 'Diferencial de presión mínimo (inH2O)',
+    min_sonar_gas_pct           DECIMAL(5,2)    NOT NULL DEFAULT 0.00    COMMENT 'Límite inferior de GVF SONAR (%)',
+    wc_operational_max_pct      DECIMAL(5,2)    NOT NULL DEFAULT 97.00   COMMENT 'WC máximo operacional (%)',
+    wc_max_delta_per_cycle_pct  DECIMAL(5,2)    NOT NULL DEFAULT 15.00   COMMENT 'Cambio máx WC por ciclo (%)',
+
     -- Parámetros estadísticos (ventana móvil)
     window_size_samples         SMALLINT        NOT NULL DEFAULT 30       COMMENT 'Muestras en ventana de análisis estadístico',
     frozen_tag_std_threshold    DOUBLE          NOT NULL DEFAULT 1e-4     COMMENT 'Std mínima para considerar señal viva',
@@ -82,14 +88,18 @@ INSERT INTO tb_config_pozo (
     expected_gor_scf_stb, gor_tolerance_pct,
     min_liquid_rate_bpd, max_liquid_rate_bpd,
     min_gas_rate_mmscfd, max_gas_rate_mmscfd,
-    max_dp_psi, viscosity_transition_cp
+    max_dp_psi, viscosity_transition_cp,
+    dp_min_threshold, min_sonar_gas_pct,
+    wc_operational_max_pct, wc_max_delta_per_cycle_pct
 ) VALUES (
     'FUL-01', 'Pozo Furrial 01 - Bloque Norte',
     26.900, 0.7000,
     850.00, 30.00,
     50.00, 5000.00,
     0.1000, 15.0000,
-    10.000, 15.000
+    10.000, 15.000,
+    0.100, 0.00,
+    97.00, 15.00
 );
 
 

@@ -788,6 +788,11 @@ createApp({
       abs_min_viscosity_cp:      5.0,
       abs_min_level_pct:        10.0,
       abs_min_sonar_gas_pct:     5.0,
+      wc_operational_max_pct:   97.0,
+      wc_max_delta_per_cycle_pct: 15.0,
+      dp_min_threshold:          0.1,
+      min_sonar_gas_pct:         0.0,
+      max_sonar_gas_pct:        30.0,
     });
 
     const configFieldsLeft = [
@@ -800,6 +805,8 @@ createApp({
       { key: 'abs_min_p_line_psig',    label: 'Spike ROC P. Línea (psig)',     step: 0.5 },
       { key: 'abs_min_t_proc_f',       label: 'Spike ROC T. Proceso (°F)',     step: 0.5 },
       { key: 'abs_min_dp_wedge_inh2o', label: 'Spike ROC DP Wedge (inH2O)',    step: 0.5 },
+      { key: 'wc_operational_max_pct', label: 'WC Operacional Máx (%)',        step: 0.5 },
+      { key: 'wc_max_delta_per_cycle_pct', label: 'Salto Máx WC/Ciclo (%)',    step: 0.5 },
     ];
     const configFieldsRight = [
       { key: 'outlier_zscore_threshold', label: 'Z-Score umbral outlier',        step: 0.1 },
@@ -810,6 +817,9 @@ createApp({
       { key: 'abs_min_viscosity_cp',     label: 'Spike ROC Viscosidad (cP)',     step: 0.5 },
       { key: 'abs_min_level_pct',        label: 'Spike ROC Nivel Separador (%)', step: 0.5 },
       { key: 'abs_min_sonar_gas_pct',    label: 'Spike ROC GVF Sonar (%)',       step: 0.5 },
+      { key: 'dp_min_threshold',         label: 'DP Mínimo Metrológico',         step: 0.05 },
+      { key: 'min_sonar_gas_pct',        label: 'GVF Sonar Mínimo (%)',          step: 0.5 },
+      { key: 'max_sonar_gas_pct',        label: 'GVF Sonar Máximo (%)',          step: 0.5 },
     ];
 
     // ── Computed de salud ─────────────────────────────────────────────────
